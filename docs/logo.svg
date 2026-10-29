@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07C160"/>
+      <stop offset="1" stop-color="#0B8A4B"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <!-- 对话气泡 -->
+  <path d="M30 34h68a8 8 0 0 1 8 8v38a8 8 0 0 1-8 8H62l-16 14v-14h-16a8 8 0 0 1-8-8V42a8 8 0 0 1 8-8z" fill="#FFFFFF"/>
+  <!-- 终端提示符 -->
+  <path d="M44 52l12 10-12 10" fill="none" stroke="#0B8A4B" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="64" y="68" width="24" height="7" rx="3.5" fill="#0B8A4B"/>
+</svg>

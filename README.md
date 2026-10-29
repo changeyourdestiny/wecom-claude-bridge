@@ -1,6 +1,35 @@
-# WeCom Claude Bridge
+<p align="center">
+  <img src="docs/logo.svg" width="88" alt="logo">
+</p>
 
-在企业微信里和 [Claude Code](https://claude.com/claude-code) 对话:消息发到企业微信智能机器人 → 桥接进程调用 `claude -p` 在本机执行 → 结果流式回传到企业微信。手机上就能让 Claude Code 读代码、跑命令、改文件。
+<h1 align="center">WeCom Claude Bridge</h1>
+
+<p align="center">
+  <b>Chat with Claude Code from WeCom (企业微信) on your phone.</b><br>
+  在企业微信里和 Claude Code 对话,手机上就能让它读代码、跑命令、改文件。
+</p>
+
+<p align="center">
+  <a href="https://github.com/changeyourdestiny/wecom-claude-bridge/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/changeyourdestiny/wecom-claude-bridge?style=flat-square&logo=github&color=blue"></a>
+  <a href="https://github.com/changeyourdestiny/wecom-claude-bridge/forks"><img alt="GitHub forks" src="https://img.shields.io/github/forks/changeyourdestiny/wecom-claude-bridge?style=flat-square&logo=github"></a>
+  <a href="https://github.com/changeyourdestiny/wecom-claude-bridge/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/changeyourdestiny/wecom-claude-bridge?style=flat-square&logo=github"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-CLI-D97757?style=flat-square">
+  <img alt="WeCom" src="https://img.shields.io/badge/WeCom-企业微信-07C160?style=flat-square">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/changeyourdestiny/wecom-claude-bridge?style=flat-square&color=green"></a>
+  <a href="https://github.com/changeyourdestiny/wecom-claude-bridge/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/changeyourdestiny/wecom-claude-bridge?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="README.md"><b>简体中文</b></a> ·
+  <a href="README.en.md">English</a>
+</p>
+
+---
+
+## 这是什么
+
+把 [Claude Code](https://claude.com/claude-code) 接到企业微信智能机器人上。你在手机上发一条消息,桥接进程在本机调用 `claude -p` 执行,结果流式回传到企业微信。
 
 ```
 企业微信 App  ──►  企业微信智能机器人(长连接)  ──►  bot.py  ──►  claude -p  ──►  本机工作目录
@@ -89,6 +118,10 @@ Windows 也可以双击 `start.bat`(窗口最小化后保持后台运行,关掉�
 - Claude Code 的权限设置(`~/.claude/settings.json` 的 `permissions`)决定了它能做什么。建议只放行需要的工具,或在工作目录里限定操作范围。
 - 不要把 `config.json`、`session.json`、日志提交到任何公开仓库。
 
+## 贡献
+
+欢迎 Issue 和 Pull Request。
+
 ## License
 
-MIT
+[MIT](LICENSE)
