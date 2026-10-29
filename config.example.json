@@ -1,0 +1,9 @@
+{
+  "bot_id": "YOUR_BOT_ID",
+  "secret": "YOUR_BOT_SECRET",
+  "work_dir": "C:/Users/yourname",
+  "claude_bin": "claude",
+  "claude_timeout_sec": 3600,
+  "session_file": "session.json",
+  "log_file": "bot.log"
+}

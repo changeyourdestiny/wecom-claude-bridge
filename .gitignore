@@ -1,0 +1,9 @@
+# 真实配置(含机器人密钥),不要提交
+config.json
+session.json
+session.json.tmp
+*.log
+*.log.*
+__pycache__/
+*.pyc
+.venv/
