@@ -6,8 +6,6 @@
 长连接接收手机消息 -> 调 claude -p 执行 -> 流式回复到企业微信。
 会话由用户手动控制:发"开启新会话"开新的,发"清理上下文"重置,
 发"resume"列出最近会话、再发"resume 序号"接续其中某个会话。
-
-配置见 config.json(用 config.example.json 复制一份,不要提交真实密钥)。
 """
 import json
 import logging
@@ -31,12 +29,12 @@ WS_URL = "wss://openws.work.weixin.qq.com"
 PING_INTERVAL = 30
 STREAM_TIMEOUT = 600  # 服务端要求 10 分钟内 finish
 MAX_BYTES = 3800  # 企业微信 markdown 单条上限 4096 字节,留余量
-# 上下文是否"快满"以模型真实用量为准(见 _context_usage),不按 jsonl 文件大小判断:
+# 上下文是否"快满"以模型真实用量为准(见 _context_usage),不再按 jsonl 文件大小判断:
 # jsonl 里含工具输出、附件等,体积与 token 数不成比例,1.7MB 的文件可能只占 12 万 token。
 # 这里只保留一个很高的文件大小兜底(远超 1M token 的合理体积),防止异常膨胀文件拖死 resume。
 SESSION_HARD_BYTES = 40 * 1024 * 1024
 CONTEXT_WARN_RATIO = 0.90  # 用量达到窗口 90% 时提示用户
-CONTEXT_WINDOW = 1000000   # 模型上下文窗口;换模型时改这里
+CONTEXT_WINDOW = 1000000   # 模型上下文窗口(1M)
 
 log = logging.getLogger("wecom-bot")
 
@@ -140,7 +138,7 @@ def _context_usage(sid):
 
     以最后一次带 usage 的请求为准:上下文 = input + cache_read + cache_creation。
     注意不能用 claude -p 输出的 modelUsage——那是整个会话的累计值(含子代理),
-    会远超窗口。
+    会远超窗口。窗口这里按 1M 算(jsonl 里的 model 名是代理别名,看不出窗口)。
     """
     path = session_path(sid)
     if not path:
@@ -257,6 +255,16 @@ def _snippet(t, n=40):
     return t if len(t) <= n else t[:n] + "…"
 
 
+PROGRESS_QUERY_RE = re.compile(
+    r"(做到|进展|进度|什么程度|到哪了|好了吗|修好了|完成了吗|做完|跑完了|结果呢|还在跑)")
+
+
+def _is_progress_query(text):
+    """「做到什么程度了」这类短查询:忙碌时直接回答进度,不排队也不转发给模型。"""
+    t = text.strip()
+    return len(t) <= 30 and bool(PROGRESS_QUERY_RE.search(t))
+
+
 # ---------------- Claude 调用 ----------------
 
 def split_markdown(text, max_bytes):
@@ -292,7 +300,6 @@ def split_markdown(text, max_bytes):
         buf_len += lb
     flush()
     return [p for p in parts if p.strip()]
-
 
 def kill_proc(p):
     """强制结束进程树(Windows 下 claude 是 .cmd,会派生子 node 进程)。"""
@@ -398,6 +405,10 @@ class Bot:
         self.busy_since = 0.0
         self.busy_text = ""
         self.current_proc = None   # 当前 claude 子进程,用于中断
+        self.task_id = 0           # 任务编号,每轮任务 +1,用于识别陈旧任务
+        self.task_done = False     # 当前任务是否已结束
+        self.last_result = ""      # 最近一次任务的结论,用于回答「做到什么程度了」
+        self.last_result_at = 0.0
         self.last_recv = time.time()
 
     def send(self, obj):
@@ -535,10 +546,11 @@ class Bot:
             self.do_stop(req_id)
             return
 
-        # 忙碌时:控制指令照常处理,普通消息立即提示而不排队
+        # 忙碌时:控制指令照常处理,普通消息立即提示而不排队。
+        # 但「做到什么程度了」这类查询直接回答进度,不必等任务结束。
         if self.busy and text not in ("开启新会话", "新会话", "/new", "/NEW",
                                       "清理上下文", "清空上下文", "/clear",
-                                      "状态", "/status"):
+                                      "状态", "/status") and not _is_progress_query(text):
             used = time.time() - self.busy_since
             self.stream(req_id, uuid.uuid4().hex,
                         "⏳ 上一个任务还在执行(已用 %.0f 秒),暂不接收新指令。\n"
@@ -546,11 +558,25 @@ class Bot:
                         "> 指令:`%s…`" % (used, self.busy_text[:40]),
                         finish=True)
             return
+        if self.busy and _is_progress_query(text):
+            self.stream(req_id, uuid.uuid4().hex, self._progress_text(), finish=True)
+            return
 
         threading.Thread(
             target=self.process, args=(req_id, chatid, chat_type, text),
             daemon=True,
         ).start()
+
+    def _progress_text(self):
+        used = time.time() - self.busy_since
+        msg = ("⏳ 当前任务还在执行,已用 %.0f 秒。\n> 指令:`%s…`"
+               % (used, self.busy_text[:60]))
+        if self.last_result:
+            age = time.time() - self.last_result_at
+            msg += ("\n\n**上一轮任务的结果**(%.0f 分钟前):\n%s"
+                    % (age / 60, self.last_result[:600]))
+        msg += "\n\n> 发「停止」可中断当前任务。"
+        return msg
 
     def _register_proc(self, p):
         self.current_proc = p
@@ -602,11 +628,14 @@ class Bot:
             self.do_resume_pick(req_id, stream_id, int(m.group(1)))
             return
 
+        self.task_id += 1
+        my_task = self.task_id
+        self.task_done = False
         self.busy = True
         self.busy_since = time.time()
         self.busy_text = text
         try:
-            self._run_task(req_id, chatid, chat_type, text, stream_id)
+            self._run_task(req_id, chatid, chat_type, text, stream_id, my_task)
         except Exception as e:
             log.exception("任务异常: %r", e)
             try:
@@ -614,8 +643,11 @@ class Bot:
             except Exception:
                 pass
         finally:
-            self.busy = False
-            self.current_proc = None
+            # 只有当前任务才能清忙碌标记:旧任务被「停止」后收尾时,
+            # 不能把用户已经发起的新任务标记成空闲。
+            if my_task == self.task_id:
+                self.busy = False
+                self.current_proc = None
 
     def do_resume_list(self, req_id, stream_id):
         items = list_sessions(CFG["work_dir"], limit=10)
@@ -663,7 +695,7 @@ class Bot:
                     "✅ 已接续第 %d 个会话 `%s`。\n下一条消息会带上它的历史上下文。"
                     % (n, sid[:8]), finish=True)
 
-    def _run_task(self, req_id, chatid, chat_type, text, stream_id):
+    def _run_task(self, req_id, chatid, chat_type, text, stream_id, my_task):
         with session_lock:
             sid = load_session().get("session_id")
 
@@ -686,6 +718,8 @@ class Bot:
         last_tick = [0.0]
 
         def on_tick(elapsed):
+            if self.task_done or my_task != self.task_id:
+                return
             if elapsed - last_tick[0] < 20:
                 return
             last_tick[0] = elapsed
@@ -721,10 +755,19 @@ class Bot:
             save_session(d)
 
         result = notice + result
+        self.last_result = result[:1500]
+        self.last_result_at = time.time()
 
         # 超长自动分片发送,不再截断丢弃
         if elapsed > 30 and not is_err:
             result += "\n\n(耗时 %.0f 秒)" % elapsed
+
+        # 任务已被「停止」或被新任务顶替:结论仍收进会话记录(上下文不丢),
+        # 但不再往对话里推,避免旧任务的回复打断用户正在看的新任务。
+        if my_task != self.task_id:
+            log.info("任务 %d 已被替换,结论不推送", my_task)
+            self.task_done = True
+            return
 
         log.info("回复 chat=%s err=%s len=%d 用时%.1fs",
                  chatid, is_err, len(result), elapsed)
@@ -736,6 +779,8 @@ class Bot:
                 self.push(chatid, result[:MAX_BYTES], chat_type)
             except Exception as e2:
                 log.error("兜底推送也失败: %s", e2)
+        finally:
+            self.task_done = True
 
     def handle_event(self, frame):
         body = frame.get("body") or {}
