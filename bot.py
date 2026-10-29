@@ -7,6 +7,7 @@
 会话由用户手动控制:发"开启新会话"开新的,发"清理上下文"重置,
 发"resume"列出最近会话、再发"resume 序号"接续其中某个会话。
 """
+import calendar
 import json
 import logging
 import logging.handlers
@@ -195,6 +196,54 @@ def _session_cwd(path):
                 r = json.loads(line)
                 if r.get("cwd"):
                     return r["cwd"]
+    except Exception:
+        pass
+    return None
+
+
+def _find_session_started_since(work_dir, since):
+    """在 work_dir 的会话里找 since 之后开始的那个,返回其 session_id。
+
+    claude -p 没返回 session_id 时兜底用:按文件修改时间筛出候选,
+    再读文件里第一条带时间戳的记录,确认它确实是这一轮新建的会话。
+    """
+    pdir = project_dir_for(work_dir)
+    if not pdir:
+        return None
+    best = None
+    try:
+        for f in os.listdir(pdir):
+            if not f.endswith(".jsonl"):
+                continue
+            path = os.path.join(pdir, f)
+            try:
+                if os.path.getmtime(path) < since - 5:
+                    continue
+            except Exception:
+                continue
+            started = _session_start_time(path)
+            if started is None or started < since:
+                continue
+            if best is None or started > best[0]:
+                best = (started, f[:-6])
+    except Exception:
+        pass
+    return best[1] if best else None
+
+
+def _session_start_time(path):
+    """会话里第一条带 timestamp 的记录时间(epoch 秒),取不到返回 None。
+
+    记录里的 timestamp 是 UTC(如 2026-10-29T08:58:11.516Z),必须按 UTC 解析,
+    和 time.time() 的比较才是同一时区。
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                r = json.loads(line)
+                ts = r.get("timestamp")
+                if ts:
+                    return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception:
         pass
     return None
@@ -733,6 +782,18 @@ class Bot:
         result, new_sid, is_err = run_claude(
             text, sid, on_tick=on_tick, register=self._register_proc)
         elapsed = time.time() - t0
+
+        # claude -p 偶尔不返回 session_id。绝不能因此丢掉会话指针(否则下一条
+        # 消息会新建会话,模型"失忆"),先从会话 jsonl 里按本轮开始时间找回。
+        if not new_sid:
+            new_sid = _find_session_started_since(CFG["work_dir"], t0 - 5)
+            if new_sid:
+                log.warning("claude 未返回 session_id,从会话记录找回 %s", new_sid)
+
+        log.info("会话:请求=%s 实际=%s%s", sid or "(新建)", new_sid or "(未找到)",
+                 "" if sid else "(本轮新建)")
+        if not new_sid:
+            notice += ("⚠️ 本轮会话未能保存,下一条消息会新建会话。\n\n")
 
         # 上下文快满(≥90%)时提示用户,由用户决定是否「开启新会话」
         used, window = _context_usage(new_sid or sid)
